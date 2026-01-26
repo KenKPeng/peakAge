@@ -79,7 +79,7 @@ build_stan_data_sym <- function(df,
   )
 
   # --- AFT design matrix (keep intercept by default) ---
-  X_T <- unname(stats::model.matrix(peak_formula, data = ath_df))
+  X_T <- stats::model.matrix(peak_formula, data = ath_df)
   K_T <- ncol(X_T)
   if (K_T < 1) stop("`peak_formula` produced K_T=0 columns; not allowed for Stan (K_T must be >= 1).")
 
@@ -89,6 +89,19 @@ build_stan_data_sym <- function(df,
   X_k <- .mm_or_empty(k_formula, ath_df)
   K_p <- ncol(X_p)
   K_k <- ncol(X_k)
+
+  # ---- preserve names for later pretty printing ----
+  X_T_names <- colnames(X_T)
+  X_p_names <- colnames(X_p)
+  X_k_names <- colnames(X_k)
+
+  # ---- convert to plain numeric matrices for Stan, but keep names separately ----
+  X_T <- as.matrix(X_T)
+  storage.mode(X_T) <- "double"
+  X_p <- as.matrix(X_p)
+  storage.mode(X_p) <- "double"
+  X_k <- as.matrix(X_k)
+  storage.mode(X_k) <- "double"
 
   list(
     N = as.integer(N),
@@ -100,12 +113,15 @@ build_stan_data_sym <- function(df,
 
     K_T = as.integer(K_T),
     X_T = X_T,
+    X_T_names = X_T_names,
 
     K_p = as.integer(K_p),
     X_p = X_p,
+    X_p_names = X_p_names,
 
     K_k = as.integer(K_k),
-    X_k = X_k
+    X_k = X_k,
+    X_k_names = X_k_names
   )
 }
 
@@ -121,13 +137,18 @@ build_stan_data_sym <- function(df,
   # If no non-intercept terms, return empty matrix (I x 0)
   if (length(has_terms) == 0L) {
     I <- nrow(data)
-    return(matrix(numeric(0), nrow = I, ncol = 0))
+    mm <- matrix(numeric(0), nrow = I, ncol = 0)
+    colnames(mm) <- character(0)
+    return(mm)
   }
 
   # Otherwise, drop intercept by default and build matrix
   f0 <- stats::update(f, ~ 0 + .)
   mm <- stats::model.matrix(f0, data = data)
-  unname(mm)
+
+  mm <- as.matrix(mm)
+  storage.mode(mm) <- "double"
+  mm
 }
 
 .warn_if_covariates_vary <- function(df_long, id_col, covars) {
@@ -153,4 +174,3 @@ build_stan_data_sym <- function(df,
   }
   invisible(NULL)
 }
-

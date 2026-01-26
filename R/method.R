@@ -193,31 +193,74 @@ print.peakage_summary <- function(x, ...) {
 .peakage_pretty_term <- function(variable, stan_data) {
   v <- variable
 
-  replace_beta <- function(prefix, X, label) {
-    if (is.null(X)) return(v)
+  # Prefer stored names (robust), fallback to colnames(X)
+  get_cn <- function(X, nm) {
+    if (!is.null(nm) && length(nm) > 0) return(nm)
     cn <- colnames(X)
+    if (!is.null(cn)) return(cn)
+    NULL
+  }
+
+  # Make dummy names more readable:
+  #   "sexMale" -> "sex = Male"
+  #   "groupB"  -> "group = B"
+  #   "x1"      -> "x1" (unchanged)
+  #   "(Intercept)" stays as-is
+  pretty_col <- function(cn) {
+    cn <- as.character(cn)
+
+    out <- cn
+    is_int <- cn %in% c("(Intercept)", "Intercept")
+    out[is_int] <- "(Intercept)"
+
+    # Try split: leading letters/underscore/dot + rest
+    # This works well for model.matrix default naming for factors.
+    ok <- !is_int & grepl("^[A-Za-z.][A-Za-z0-9._]*[A-Za-z][0-9A-Za-z._]*$", cn)
+    if (any(ok)) {
+      m <- regexec("^([A-Za-z.][A-Za-z0-9._]*?)([-]?[A-Za-z0-9].*)$", cn[ok])
+      reg <- regmatches(cn[ok], m)
+      out_ok <- cn[ok]
+      for (i in seq_along(reg)) {
+        if (length(reg[[i]]) == 3) {
+          var <- reg[[i]][2]
+          lvl <- reg[[i]][3]
+          # Heuristic: only rewrite if it looks like "var"+"level" (common for factors)
+          # Avoid mangling interaction terms like "x1:x2" (those won't match the regex anyway)
+          out_ok[i] <- paste0(var, " = ", lvl)
+        }
+      }
+      out[ok] <- out_ok
+    }
+
+    out
+  }
+
+  replace_beta <- function(prefix, X, label, names_vec = NULL) {
+    cn <- get_cn(X, names_vec)
     if (is.null(cn)) return(v)
+    cn <- pretty_col(cn)
 
     pat <- paste0("^", prefix, "\\[(\\d+)\\]$")
     m <- regexec(pat, v)
     reg <- regmatches(v, m)
+
     out <- v
     for (i in seq_along(reg)) {
       if (length(reg[[i]]) == 2) {
         idx <- as.integer(reg[[i]][2])
         if (!is.na(idx) && idx >= 1 && idx <= length(cn)) {
-          out[i] <- paste0(label, ":", cn[idx])
+          out[i] <- paste0(label, ": ", cn[idx])
         }
       }
     }
     out
   }
 
-  v <- replace_beta("beta_T",  stan_data$X_T, "AFT")
-  v <- replace_beta("beta_p",  stan_data$X_p, "p")
-  v <- replace_beta("beta_k",  stan_data$X_k, "k")
-  v <- replace_beta("beta_kL", stan_data$X_k, "kL")
-  v <- replace_beta("beta_kR", stan_data$X_k, "kR")
+  v <- replace_beta("beta_T",  stan_data$X_T, "AFT", stan_data$X_T_names %||% NULL)
+  v <- replace_beta("beta_p",  stan_data$X_p, "p",   stan_data$X_p_names %||% NULL)
+  v <- replace_beta("beta_k",  stan_data$X_k, "k",   stan_data$X_k_names %||% NULL)
+  v <- replace_beta("beta_kL", stan_data$X_k, "kL",  stan_data$X_k_names %||% NULL)
+  v <- replace_beta("beta_kR", stan_data$X_k, "kR",  stan_data$X_k_names %||% NULL)
 
   v
 }
