@@ -1,3 +1,7 @@
+# ---- small utils ----
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+
 #' Summarise posterior for a peak-age fit (via CmdStanMCMC$summary)
 #'
 #' This summary uses cmdstanr's built-in summary table, which is stable and fast.
@@ -39,6 +43,8 @@ summarise_peakage <- function(object,
   rename_coefs        <- isTRUE(rename_coefs)
 
   curve <- object$curve %||% "symmetric"
+
+  # ---- parameter blocks based on stan_data dimensions ----
   blocks <- .peakage_param_blocks(curve = curve, stan_data = object$stan_data)
 
   # If user doesn't want population/baseline params, drop them from blocks
@@ -46,16 +52,22 @@ summarise_peakage <- function(object,
     if (!is.null(blocks$other)) {
       blocks$other <- setdiff(blocks$other, c("p_pop", "logk_pop", "logkL_pop", "logkR_pop", "sigma_y"))
     }
-    # optionally hide sigma_T as well when excluding population-level params
     if (!is.null(blocks$AFT_logT)) {
       blocks$AFT_logT <- setdiff(blocks$AFT_logT, "sigma_T")
     }
   }
 
+  # ---- robust filtering: keep only variables that actually exist in the fitted output ----
+  avail <- .peakage_available_vars(object$fit)
+
   out_tables <- list()
 
   for (bn in names(blocks)) {
     vars <- blocks[[bn]]
+    if (length(vars) == 0) next
+
+    # Intersect with available vars. This avoids errors when parameters are absent.
+    vars <- vars[vars %in% avail]
     if (length(vars) == 0) next
 
     tab <- .peakage_cmdstan_summary(
@@ -117,7 +129,14 @@ print.peakage_summary <- function(x, ...) {
 
 # ---- internal helpers ----
 
-`%||%` <- function(a, b) if (!is.null(a)) a else b
+.peakage_available_vars <- function(fit) {
+  # cmdstanr provides $summary() table with a "variable" column.
+  tab <- tryCatch(fit$summary(), error = function(e) NULL)
+  if (is.null(tab)) return(character(0))
+  tab <- as.data.frame(tab)
+  if (!("variable" %in% names(tab))) return(character(0))
+  unique(tab$variable)
+}
 
 .peakage_param_blocks <- function(curve = c("symmetric", "asymmetric"), stan_data = NULL) {
   curve <- match.arg(curve)
@@ -128,27 +147,19 @@ print.peakage_summary <- function(x, ...) {
 
   blocks <- list()
 
+  # AFT is always present in our Stan programs
   blocks$AFT_logT <- c("beta_T", "sigma_T")
 
-  if (!is.na(K_p) && K_p > 0) {
-    blocks$p_submodel <- c("beta_p")
-  } else {
-    blocks$p_submodel <- character(0)
-  }
+  # p submodel
+  blocks$p_submodel <- if (!is.na(K_p) && K_p > 0) "beta_p" else character(0)
 
+  # k submodel differs by curve type
   if (curve == "symmetric") {
-    if (!is.na(K_k) && K_k > 0) {
-      blocks$k_submodel <- c("beta_k")
-    } else {
-      blocks$k_submodel <- character(0)
-    }
+    blocks$k_submodel <- if (!is.na(K_k) && K_k > 0) "beta_k" else character(0)
     blocks$other <- c("p_pop", "logk_pop", "sigma_y")
   } else {
-    if (!is.na(K_k) && K_k > 0) {
-      blocks$k_submodel <- c("beta_kL", "beta_kR")
-    } else {
-      blocks$k_submodel <- character(0)
-    }
+    # asymmetric Stan must define beta_kL and beta_kR if K_k > 0
+    blocks$k_submodel <- if (!is.na(K_k) && K_k > 0) c("beta_kL", "beta_kR") else character(0)
     blocks$other <- c("p_pop", "logkL_pop", "logkR_pop", "sigma_y")
   }
 
@@ -157,7 +168,6 @@ print.peakage_summary <- function(x, ...) {
 }
 
 .peakage_cmdstan_summary <- function(fit, variables, probs, include_diagnostics) {
-  # Prefer passing probs (cmdstanr supports it in newer versions). Fallback if not supported.
   tab <- tryCatch(
     fit$summary(variables = variables, probs = probs),
     error = function(e) NULL
@@ -203,8 +213,8 @@ print.peakage_summary <- function(x, ...) {
     out
   }
 
-  v <- replace_beta("beta_T", stan_data$X_T, "AFT")
-  v <- replace_beta("beta_p", stan_data$X_p, "p")
+  v <- replace_beta("beta_T",  stan_data$X_T, "AFT")
+  v <- replace_beta("beta_p",  stan_data$X_p, "p")
   v <- replace_beta("beta_k",  stan_data$X_k, "k")
   v <- replace_beta("beta_kL", stan_data$X_k, "kL")
   v <- replace_beta("beta_kR", stan_data$X_k, "kR")
@@ -239,4 +249,3 @@ print.peakage_summary <- function(x, ...) {
 
   paste(pieces, collapse = "\n")
 }
-
