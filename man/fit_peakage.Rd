@@ -35,7 +35,10 @@ fit_peakage(
 \item{curve}{Curve family: "symmetric" or "asymmetric".}
 
 \item{peak_formula}{Athlete-level covariate formula for log peak age (AFT),
-e.g. ~ x1 + x2. Use ~ 1 for intercept-only.}
+e.g. ~ x1 + x2. Use ~ 1 for intercept-only. Categorical covariates are automatically handled using R’s default
+treatment contrasts. The first level of each factor is treated as the
+reference group, and regression coefficients represent differences
+relative to that reference.}
 
 \item{p_formula}{Athlete-level covariate formula for p (peak height) submodel.
 Default ~ 1 (intercept handled by p_pop; if ~1, treated as no covariates).}
