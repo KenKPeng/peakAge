@@ -16,5 +16,5 @@ The API may change. Feedback is welcome.
 
 ```r
 # install.packages("devtools")
-devtools::install_github("yourname/peakAge")
+devtools::install_github("KenKPeng/peakAge")
 
