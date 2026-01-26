@@ -150,6 +150,12 @@ fit_peakage <- function(df,
     if (length(stan_data$tau_u_rate) != 3L) stan_data$tau_u_rate <- rep(stan_data$tau_u_rate[1], 3)
   }
 
+  # ---- Stan cannot accept character data (e.g., X_*_names). Drop before sampling. ----
+  stan_data_cmdstan <- stan_data
+  stan_data_cmdstan$X_T_names <- NULL
+  stan_data_cmdstan$X_p_names <- NULL
+  stan_data_cmdstan$X_k_names <- NULL
+
   # --- compile model (cache) ---
   mod <- .peakage_get_model(stan_file)
 
@@ -178,7 +184,6 @@ fit_peakage <- function(df,
       ))
     } else {
       # asymmetric
-      # if user gave L/R distinct, init at their means; else shared
       kp <- prior_used$k$pop
       logkL0 <- if (is.list(kp)) kp$L[1] else kp[1]
       logkR0 <- if (is.list(kp)) kp$R[1] else kp[1]
@@ -195,7 +200,7 @@ fit_peakage <- function(df,
   }
 
   fit <- mod$sample(
-    data = stan_data,
+    data = stan_data_cmdstan,
     chains = chains,
     parallel_chains = parallel_chains,
     threads_per_chain = threads_per_chain,
@@ -211,7 +216,7 @@ fit_peakage <- function(df,
 
   out <- list(
     fit = fit,
-    stan_data = stan_data,
+    stan_data = stan_data,  # keep names for summary printing
     athlete_ids = athlete_ids,
     curve = curve,
     prior = prior_used,
@@ -233,22 +238,15 @@ fit_peakage <- function(df,
   curve <- match.arg(curve)
 
   # v1 defaults assuming y roughly in [0, 1]
-  # user should adjust p prior if not standardized
   defaults <- list(
     p = list(pop = c(0.5, 1.0)),        # p_pop ~ N(0.5, 1)
     k = list(pop = c(0.0, 2.0)),        # logk_pop ~ N(0, 2) or used for both sides
     hidden = list(
-      # tau_u ~ Exp(rate): smaller rate => heavier tail
       tau_u_rate = if (curve == "symmetric") c(1.0, 1.0) else c(1.0, 1.0, 1.0),
-
-      # sigma_y ~ N(0, scale) with <lower=1e-6>, effectively half-normal
       sigma_y_sd = 0.5,
-
-      # regression coefficients (shared scale)
       beta_T_sd = 2.0,
       beta_p_sd = 2.0,
       beta_k_sd = 2.0,
-
       sigma_T_sd = 1.0
     )
   )
@@ -291,7 +289,7 @@ fit_peakage <- function(df,
     }
   }
 
-  # allow power users to override hidden pieces (optional; not documented heavily)
+  # allow power users to override hidden pieces
   if (!is.null(prior$hidden)) {
     if (!is.list(prior$hidden)) stop("prior$hidden must be a list.")
     h <- prior$hidden
@@ -358,3 +356,4 @@ fit_peakage <- function(df,
   assign(key, mod, envir = .peakage_model_cache)
   mod
 }
+

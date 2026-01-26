@@ -67,7 +67,7 @@ summarise_peakage <- function(object,
     if (length(vars) == 0) next
 
     # Intersect with available vars. This avoids errors when parameters are absent.
-    vars <- vars[vars %in% avail]
+    vars <- .expand_param_vars(vars, avail)
     if (length(vars) == 0) next
 
     tab <- .peakage_cmdstan_summary(
@@ -291,4 +291,24 @@ print.peakage_summary <- function(x, ...) {
   }
 
   paste(pieces, collapse = "\n")
+}
+
+.expand_param_vars <- function(vars, avail) {
+  out <- character(0)
+
+  for (v in vars) {
+    if (v %in% avail) {
+      # scalar parameter
+      out <- c(out, v)
+    } else {
+      # try vector parameters: beta_T -> beta_T[1], beta_T[2], ...
+      pat <- paste0("^", v, "\\[")
+      hits <- grep(pat, avail, value = TRUE)
+      if (length(hits) > 0) {
+        out <- c(out, hits)
+      }
+    }
+  }
+
+  unique(out)
 }
