@@ -1,14 +1,29 @@
 Package: peakAge
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+Type: Package
+Title: Bayesian Latent Peak-Age Models for Athlete Performance
+Version: 0.1.0
+Authors@R:
+    person("K.Ken", "Peng",
+           email = "kangyi_peng@sfu.ca",
+           role = c("aut", "cre"))
+Description: Bayesian hierarchical models for estimating athletes' peak age
+    and performance trajectories using symmetric and asymmetric latent
+    peak-performance curves. The package supports athlete-level covariates,
+    population-level effects, and Bayesian uncertainty quantification via
+    posterior summaries and visualizations.
 License: MIT + file LICENSE
 Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
-Imports: 
-    ggplot2
+LazyData: true
 URL: https://github.com/KenKPeng/peakAge
 BugReports: https://github.com/KenKPeng/peakAge/issues
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    cmdstanr,
+    ggplot2,
+    stats,
+    utils
+Suggests:
+    knitr,
+    rmarkdown,
+    posterior

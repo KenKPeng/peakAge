@@ -1,3 +1,3 @@
-# peakAge (development version)
+# peakAge 0.1.0
 
-* Initial CRAN submission.
+- Initial development release.
