@@ -13,9 +13,15 @@ utils::globalVariables(c("lo", "hi", "mu", "T_hat"))
 #' Band types:
 #' - band_type = "mu": posterior credible band for latent mean curve mu(age)
 #' - band_type = "pred": posterior predictive band for new observations y(age)
+#' For extended fits, predictive bands use the athlete's residual SD and the
+#' fitted two-piece Student-t error distribution. If the model has competition
+#' covariates, curves and bands use a zero competition adjustment. Observed
+#' scores are shifted to this reference using the posterior mean adjustment.
 #'
 #' @param fit A `peakage_fit` returned by [fit_peakage()].
 #' @param df Long-format data used for fitting (or compatible), containing id/age/y.
+#'   When plotting observed scores from an extended fit, include its competition
+#'   covariates as well.
 #' @param athlete_id One or more athlete IDs (e.g. "A2" or c("A2","A7")).
 #' @param id,age,y Column names in df. If NULL, uses fit$id_col / fit$age_col / fit$y_col,
 #'   falling back to "Athlete_id"/"age"/"y".
@@ -112,6 +118,18 @@ plot_athlete_curve <- function(fit,
   }
 
   curve <- fit$curve %||% "symmetric"
+  extended <- identical(fit$model, "extended")
+  predictive <- isTRUE(show_band) && band_type == "pred"
+  adjusted <- extended && length(fit$design$observation) > 0L
+  adjusted_points <- adjusted && isTRUE(show_points)
+  y_label <- if (adjusted_points) paste0(y, " (adjusted)") else y
+  caption <- if (adjusted) {
+    if (adjusted_points) {
+      "Curves use zero competition adjustment. Scores are adjusted to the same reference."
+    } else {
+      "Curves use zero competition adjustment."
+    }
+  }
 
   # ---- variables from draws ----
   vars <- if (curve == "symmetric") {
@@ -119,10 +137,21 @@ plot_athlete_curve <- function(fit,
   } else {
     c("T_hat", "p_hat", "logkL_hat", "logkR_hat")
   }
-  if (isTRUE(show_band) && band_type == "pred") vars <- c(vars, "sigma_y")
+  if (extended) {
+    if (predictive) vars <- c(vars, "sigma_y_i")
+    vars <- as.vector(outer(vars, i_vec, function(var, i) sprintf("%s[%d]", var, i)))
+    if (predictive) vars <- c(vars, "error_shape", "error_nu")
+    if (adjusted_points) vars <- c(vars, "delta")
+  } else if (predictive) {
+    vars <- c(vars, "sigma_y")
+  }
 
   dr <- fit$fit$draws(variables = vars, format = "draws_matrix")
   if (ncol(dr) == 0) stop("No draws returned; check variables exist in fit.")
+  if (adjusted_points) {
+    delta_names <- sprintf("delta[%d]", seq_along(fit$design$observation))
+    delta_mean <- colMeans(dr[, delta_names, drop = FALSE])
+  }
 
   # ---- subsample draws for speed ----
   ndraws <- as.integer(ndraws)
@@ -142,7 +171,7 @@ plot_athlete_curve <- function(fit,
   }
 
   # For pred band
-  if (isTRUE(show_band) && band_type == "pred") {
+  if (predictive && !extended) {
     if (!"sigma_y" %in% colnames(dr)) stop("sigma_y draws missing; cannot draw predictive band.")
     sig_draw <- dr[, "sigma_y"]
   }
@@ -155,6 +184,9 @@ plot_athlete_curve <- function(fit,
     a_obs <- as.numeric(df_i[[age]])
     y_obs <- as.numeric(df_i[[y]])
     if (any(!is.finite(a_obs)) || any(!is.finite(y_obs))) stop("Observed age/y must be finite for athlete ", aid)
+    if (adjusted_points) {
+      y_obs <- y_obs - .peakage_observation_shift(fit, df_i, delta_mean)
+    }
 
     # athlete-specific grid unless user supplies a common one
     if (is.null(age_grid)) {
@@ -213,8 +245,18 @@ plot_athlete_curve <- function(fit,
       } else {
         # posterior predictive
         yrep_mat <- mu_mat
+        sigma <- if (extended) grab_vec_i("sigma_y_i", i) else sig_draw
+        if (extended) {
+          shape <- as.numeric(dr[, "error_shape"])
+          nu <- as.numeric(dr[, "error_nu"])
+        }
         for (s in seq_len(S)) {
-          yrep_mat[, s] <- mu_mat[, s] + stats::rnorm(G, mean = 0, sd = sig_draw[s])
+          error <- if (extended) {
+            sigma[s] * .peakage_split_t_rng(G, shape[s], nu[s])
+          } else {
+            stats::rnorm(G, mean = 0, sd = sigma[s])
+          }
+          yrep_mat[, s] <- mu_mat[, s] + error
         }
         lo <- apply(yrep_mat, 1, stats::quantile, probs = lo_p, names = FALSE)
         hi <- apply(yrep_mat, 1, stats::quantile, probs = hi_p, names = FALSE)
@@ -265,7 +307,7 @@ plot_athlete_curve <- function(fit,
     )
 
     if (is.null(title)) title <- paste0("Athlete ", athlete_id, " (", curve, ")")
-    p <- p + ggplot2::labs(title = title, x = age, y = y) + gg_opts$theme
+    p <- p + ggplot2::labs(title = title, x = age, y = y_label, caption = caption) + gg_opts$theme
     if (!is.null(gg_opts$xlim) || !is.null(gg_opts$ylim)) {
       p <- p + ggplot2::coord_cartesian(
         xlim = gg_opts$xlim,
@@ -332,7 +374,7 @@ plot_athlete_curve <- function(fit,
     p <- p + ggplot2::facet_wrap(~ athlete_id, ncol = facet_ncol, scales = scales_opt)
 
     if (is.null(title)) title <- paste0("Fitted curves (", curve, ")")
-    p <- p + ggplot2::labs(title = title, x = age, y = y) + gg_opts$theme
+    p <- p + ggplot2::labs(title = title, x = age, y = y_label, caption = caption) + gg_opts$theme
 
     if (!is.null(gg_opts$xlim) || !is.null(gg_opts$ylim)) {
       p <- p + ggplot2::coord_cartesian(xlim = gg_opts$xlim, ylim = gg_opts$ylim)
@@ -383,12 +425,36 @@ plot_athlete_curve <- function(fit,
 
     local_title <- title
     if (is.null(local_title)) local_title <- paste0("Athlete ", aid, " (", curve, ")")
-    p <- p + ggplot2::labs(title = local_title, x = age, y = y) + gg_opts$theme
+    p <- p + ggplot2::labs(title = local_title, x = age, y = y_label, caption = caption) + gg_opts$theme
 
     out_list[[j]] <- p
   }
 
   out_list
+}
+
+.peakage_observation_shift <- function(fit, data, delta_mean) {
+  frame <- stats::model.frame(fit$observation_terms, data = data,
+                              xlev = fit$observation_xlevels, na.action = stats::na.fail)
+  design <- stats::model.matrix(fit$observation_terms, data = frame,
+                                contrasts.arg = fit$observation_contrasts)
+  columns <- fit$design$observation
+  if (!all(columns %in% colnames(design)) || any(!is.finite(design))) {
+    stop("`df` must match the competition design used in the extended fit.")
+  }
+  as.vector(design[, columns, drop = FALSE] %*% delta_mean)
+}
+
+# Center and standardize the two-piece Student-t used by the extended likelihood.
+.peakage_split_t_rng <- function(n, shape, nu) {
+  asymmetry <- tanh(shape / 2)
+  half_t_mean <- sqrt(nu / pi) * exp(lgamma((nu - 1) / 2) - lgamma(nu / 2))
+  raw_t_variance <- nu / (nu - 2)
+  variance <- raw_t_variance + asymmetry^2 * (3 * raw_t_variance - 4 * half_t_mean^2)
+  p_left <- stats::plogis(-shape)
+  width <- ifelse(stats::runif(n) < p_left, -2 * p_left, 2 * stats::plogis(shape))
+  w <- width * abs(stats::rt(n, df = nu))
+  (w - 2 * asymmetry * half_t_mean) / sqrt(variance)
 }
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b

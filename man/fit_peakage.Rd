@@ -26,7 +26,12 @@ fit_peakage(
   seed = NULL,
   refresh = 0,
   stan_file = NULL,
-  ...
+  ...,
+  model = c("baseline", "extended"),
+  left_formula = NULL,
+  right_formula = NULL,
+  observation_formula = ~0,
+  peak_sd_group = NULL
 )
 }
 \arguments{
@@ -55,7 +60,17 @@ k = list(pop = c(mean, sd))   # symmetric
 # or asymmetric:
 # k = list(pop = list(L = c(meanL, sdL), R = c(meanR, sdR)))
 )
-All other priors have weak defaults (see code).}
+For the extended model, \code{beta_mean} and \code{beta_sd} are lists
+indexed by \code{alpha}, \code{L}, \code{R}, and \code{tau}. Each entry
+is a scalar or a vector for that formula's model matrix, with names
+matching the design columns when supplied. Other fields are
+\code{delta_sd} for competition coefficients,
+\code{scale_sd} for the four athlete-effect half-normal prior scales
+in the same order, \code{residual_scale_sd} and
+\code{residual_heterogeneity_sd} for residual half-normal prior scales,
+\code{lkj_eta}, \code{error_shape_sd}, and \code{error_nu_shape} and
+\code{error_nu_rate} for the Gamma prior restricted to degrees of freedom
+greater than two. Omitted fields use the default prior values.}
 
 \item{formula}{Deprecated/compatibility alias for \code{peak_formula}.}
 
@@ -73,9 +88,23 @@ All other priors have weak defaults (see code).}
 
 \item{refresh}{Stan sampling refresh.}
 
-\item{stan_file}{Optional path to Stan file. If NULL, uses inst/stan based on \code{curve}.}
+\item{stan_file}{Optional path to a compatible Stan file. If NULL, uses
+the bundled file for the selected model and curve.}
 
 \item{...}{Passed to cmdstanr::CmdStanModel$sample().}
+
+\item{model}{Fit \code{"baseline"} (default) or the opt-in \code{"extended"}
+asymmetric model. The extended model jointly estimates correlated athlete
+effects, athlete-specific residual SDs, and two-piece Student-t errors.}
+
+\item{left_formula, right_formula}{Optional athlete-level formulas for the two
+log curvatures in the extended model. Each defaults to \code{k_formula}.}
+
+\item{observation_formula}{One-sided competition-level formula for the
+extended model. Its intercept is omitted because peak height supplies it.}
+
+\item{peak_sd_group}{Optional name of an athlete-level column identifying
+groups that share a peak-height SD in the extended model.}
 }
 \value{
 An object of class \code{peakage_fit}.
@@ -84,10 +113,6 @@ An object of class \code{peakage_fit}.
 Main entry point: prepares Stan data, compiles the Stan model, and runs MCMC.
 }
 \details{
-Prior design (v1):
-\itemize{
-\item We encourage users to standardize y to roughly 0-1. If not, adjust p prior accordingly.
-\item Users typically only need to set p prior (and optionally k prior).
-\item Other priors default to weak / conservative values and are not the primary user surface.
-}
+The default priors assume scores on roughly a zero-to-one scale. Set the
+peak-height and observation-scale priors to suit the data if using other units.
 }

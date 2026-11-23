@@ -10,7 +10,8 @@ athlete_estimates(
   point = c("mean", "median"),
   include_ci = TRUE,
   include_p = TRUE,
-  include_k = TRUE
+  include_k = TRUE,
+  include_sigma_y = FALSE
 )
 }
 \arguments{
@@ -25,7 +26,12 @@ If NULL, returns all athletes.}
 
 \item{include_p}{Logical; include p if TRUE.}
 
-\item{include_k}{Logical; include k (or kL/kR) if TRUE.}
+\item{include_k}{Logical; include k (or kL/kR) if TRUE.
+Extended fits summarize curvature on its natural scale after exponentiating
+each posterior draw.}
+
+\item{include_sigma_y}{Logical; include the athlete-specific residual SD for
+an extended fit. Defaults to FALSE.}
 }
 \value{
 A data.frame with one row per athlete.

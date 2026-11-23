@@ -27,7 +27,9 @@ plot_athlete_curve(
 \arguments{
 \item{fit}{A \code{peakage_fit} returned by \code{\link[=fit_peakage]{fit_peakage()}}.}
 
-\item{df}{Long-format data used for fitting (or compatible), containing id/age/y.}
+\item{df}{Long-format data used for fitting (or compatible), containing id/age/y.
+When plotting observed scores from an extended fit, include its competition
+covariates as well.}
 
 \item{athlete_id}{One or more athlete IDs (e.g. "A2" or c("A2","A7")).}
 
@@ -84,5 +86,9 @@ Band types:
 \itemize{
 \item band_type = "mu": posterior credible band for latent mean curve mu(age)
 \item band_type = "pred": posterior predictive band for new observations y(age)
+For extended fits, predictive bands use the athlete's residual SD and the
+fitted two-piece Student-t error distribution. If the model has competition
+covariates, curves and bands use a zero competition adjustment. Observed
+scores are shifted to this reference using the posterior mean adjustment.
 }
 }

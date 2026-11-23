@@ -7,6 +7,8 @@
 #' This summary uses cmdstanr's built-in summary table, which is stable and fast.
 #' It groups parameters by submodel blocks and optionally renames regression
 #' coefficients using the design-matrix column names.
+#' Extended fits also summarize the random-effect scales and correlations,
+#' the residual distribution, and any competition-level coefficients.
 #'
 #' Note: prior settings (if stored in the fit object) are kept in the returned object
 #' as `res$prior`, but are not printed by default. Please refer to the documentation.
@@ -16,6 +18,8 @@
 #'   Default c(0.05, 0.5, 0.95).
 #' @param include_diagnostics Logical; include rhat/ess columns if available.
 #' @param include_population Logical; include population/baseline parameters.
+#'   For extended fits, this includes the intercepts, random-effect scales and
+#'   correlations, and residual distribution parameters.
 #' @param rename_coefs Logical; if TRUE, rename beta rows using design matrix column names.
 #' @param format Output format: "data.frame" or "html" (knitr::kable if available).
 #' @return An object of class `peakage_summary`.
@@ -43,22 +47,21 @@ summarise_peakage <- function(object,
   rename_coefs        <- isTRUE(rename_coefs)
 
   curve <- object$curve %||% "symmetric"
+  extended <- identical(object$model, "extended")
 
   # ---- parameter blocks based on stan_data dimensions ----
-  blocks <- .peakage_param_blocks(curve = curve, stan_data = object$stan_data)
-
-  # If user doesn't want population/baseline params, drop them from blocks
-  if (!include_population) {
-    if (!is.null(blocks$other)) {
+  if (extended) {
+    blocks <- .peakage_extended_blocks(object$design, include_population)
+    avail <- object$fit$metadata()$variables
+    term_labels <- .peakage_extended_terms(object$design, object$group_levels)
+  } else {
+    blocks <- .peakage_param_blocks(curve = curve, stan_data = object$stan_data)
+    if (!include_population) {
       blocks$other <- setdiff(blocks$other, c("p_pop", "logk_pop", "logkL_pop", "logkR_pop", "sigma_y"))
-    }
-    if (!is.null(blocks$AFT_logT)) {
       blocks$AFT_logT <- setdiff(blocks$AFT_logT, "sigma_T")
     }
+    avail <- .peakage_available_vars(object$fit)
   }
-
-  # ---- robust filtering: keep only variables that actually exist in the fitted output ----
-  avail <- .peakage_available_vars(object$fit)
 
   out_tables <- list()
 
@@ -74,11 +77,16 @@ summarise_peakage <- function(object,
       fit = object$fit,
       variables = vars,
       probs = probs,
-      include_diagnostics = include_diagnostics
+      include_diagnostics = include_diagnostics,
+      extended = extended
     )
     if (nrow(tab) == 0) next
 
-    if (rename_coefs) {
+    if (rename_coefs && extended) {
+      tab$term <- tab$variable
+      labels <- unname(term_labels[tab$variable])
+      tab$term[!is.na(labels)] <- labels[!is.na(labels)]
+    } else if (rename_coefs) {
       tab$term <- .peakage_pretty_term(
         variable = tab$variable,
         stan_data = object$stan_data
@@ -98,6 +106,7 @@ summarise_peakage <- function(object,
     prior = object$prior %||% NULL,  # keep, but do not print
     call = match.call()
   )
+  if (extended) res$model <- "extended"
   class(res) <- "peakage_summary"
 
   if (format == "html") {
@@ -110,6 +119,7 @@ summarise_peakage <- function(object,
 #' @export
 print.peakage_summary <- function(x, ...) {
   cat("peakage_summary\n")
+  if (!is.null(x$model)) cat("  model:", x$model, "\n")
   cat("  curve:", x$curve, "\n")
   cat("  probs:", paste0(x$probs, collapse = ", "), "\n\n")
 
@@ -167,7 +177,61 @@ print.peakage_summary <- function(x, ...) {
   blocks
 }
 
-.peakage_cmdstan_summary <- function(fit, variables, probs, include_diagnostics) {
+.peakage_extended_blocks <- function(design, include_population) {
+  coefficient_rows <- function(prefix, terms) {
+    i <- seq_along(terms)
+    if (!include_population) i <- i[terms != "(Intercept)"]
+    sprintf("%s[%d]", prefix, i)
+  }
+
+  blocks <- list(
+    AFT_logT = coefficient_rows("b_tau", design$tau),
+    p_submodel = coefficient_rows("b_alpha", design$alpha),
+    kL_submodel = coefficient_rows("b_L", design$L),
+    kR_submodel = coefficient_rows("b_R", design$R),
+    observation = coefficient_rows("delta", design$observation)
+  )
+  if (include_population) {
+    blocks$athlete_scales <- c("sigma_alpha_group", "sigma_L", "sigma_R", "sigma_tau")
+    pairs <- which(lower.tri(matrix(0, 4L, 4L)), arr.ind = TRUE)
+    blocks$athlete_correlations <- sprintf("Omega[%d,%d]", pairs[, 1], pairs[, 2])
+    blocks$residual <- c("sigma_y", "omega_y", "error_shape", "error_nu")
+  }
+  blocks
+}
+
+.peakage_extended_terms <- function(design, group_levels) {
+  coefficient_labels <- function(prefix, terms) {
+    stats::setNames(as.character(terms), sprintf("%s[%d]", prefix, seq_along(terms)))
+  }
+  effects <- c("peak level", "log pre-peak curvature", "log post-peak curvature", "log peak age")
+  pairs <- which(lower.tri(matrix(0, length(effects), length(effects))), arr.ind = TRUE)
+  c(
+    coefficient_labels("b_alpha", design$alpha),
+    coefficient_labels("b_L", design$L),
+    coefficient_labels("b_R", design$R),
+    coefficient_labels("b_tau", design$tau),
+    coefficient_labels("delta", design$observation),
+    stats::setNames(sprintf("Peak-level SD: %s", group_levels),
+                    sprintf("sigma_alpha_group[%d]", seq_along(group_levels))),
+    stats::setNames(paste(effects[pairs[, 2]], effects[pairs[, 1]], sep = " / "),
+                    sprintf("Omega[%d,%d]", pairs[, 1], pairs[, 2]))
+  )
+}
+
+.peakage_cmdstan_summary <- function(fit, variables, probs, include_diagnostics, extended = FALSE) {
+  if (extended) {
+    measures <- list("mean", "median", "sd", "mad")
+    if (length(probs)) {
+      measures <- c(measures, list(function(x) {
+        stats::setNames(stats::quantile(x, probs = probs, names = FALSE),
+                        paste0("q", 100 * probs))
+      }))
+    }
+    if (include_diagnostics) measures <- c(measures, "rhat", "ess_bulk", "ess_tail")
+    return(as.data.frame(do.call(fit$summary, c(list(variables = variables), measures))))
+  }
+
   tab <- tryCatch(
     fit$summary(variables = variables, probs = probs),
     error = function(e) NULL

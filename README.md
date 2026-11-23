@@ -21,9 +21,17 @@ sports science, performance analysis, and applied statistics.
 
 ## Status
 
-🚧 **Under active development**  
-The API may change as new features are added.
-Feedback and contributions are welcome.
+Version 0.2.0 adds the extended asymmetric joint model used in the revised
+manuscript while retaining the existing baseline models.
+
+The revised manuscript's asymmetric joint model uses
+`model = "extended", curve = "asymmetric"`. It includes correlated athlete
+effects, component-specific covariate formulas, competition-level adjustments,
+grouped peak-level SDs, and athlete-specific residual SDs with standardized
+two-piece Student-t errors. Symmetric trajectories remain available in the
+baseline model; the extended model is asymmetric only.
+
+See [Extended asymmetric model](#extended-asymmetric-model) for an example.
 
 ---
 
@@ -45,6 +53,9 @@ cmdstanr::install_cmdstan()
 install.packages("remotes")
 remotes::install_github("KenKPeng/peakAge")
 ```
+
+For the fixed manuscript version, use
+`remotes::install_github("KenKPeng/peakAge@v0.2.0")`.
 
 Load the package:
 
@@ -236,4 +247,116 @@ ath2 <- athlete_estimates(fit2,
                          include_ci = TRUE,
                          include_k = T,
                          include_p = F)
+```
+
+## Extended asymmetric model
+
+Use `model = "extended"` with `curve = "asymmetric"` to fit the following
+components together.
+
+- Separate athlete-level regressions for peak level, log pre-peak curvature,
+  log post-peak curvature, and log peak age. If a side's formula is omitted,
+  it uses `k_formula`.
+- Correlated athlete deviations in all four quantities. An optional
+  athlete-level column `peak_sd_group` defines groups with different
+  between-athlete SDs for peak level.
+- Competition-level score adjustments via `observation_formula`. Use `~ 0`
+  for a trajectory with no competition adjustments.
+- Athlete-specific residual SDs and standardized two-piece Student-t errors.
+  The two-piece distribution can represent asymmetry, and its unit variance
+  makes each athlete's residual SD interpretable on the score scale.
+
+The existing calls above use the baseline model. The example below generates
+competition scores and illustrates the extended fitting and prediction workflow.
+
+```r
+set.seed(24)
+n_athletes <- 16L
+n_per <- 12L
+athletes <- data.frame(
+  Athlete_id = sprintf("S%02d", seq_len(n_athletes)),
+  event = factor(rep(c("track", "field"), each = n_athletes / 2L)),
+  cohort = rep(c(-0.5, 0.5), times = n_athletes / 2L)
+)
+row_id <- rep(seq_len(n_athletes), each = n_per)
+sim <- athletes[row_id, ]
+sim$age <- rep(seq(20, 34, length.out = n_per), times = n_athletes)
+sim$indoor <- rbinom(nrow(sim), 1, 0.3)
+
+track <- as.numeric(athletes$event == "track")
+height_effect <- rnorm(n_athletes)
+peak_level <- 0.8 + 0.05 * track + (0.04 + 0.04 * track) * height_effect
+peak_age <- exp(log(27) + 0.03 * track + 0.01 * athletes$cohort +
+                  0.05 * (0.5 * height_effect + sqrt(0.75) * rnorm(n_athletes)))
+left <- exp(log(0.009) + 0.2 * track + rnorm(n_athletes, sd = 0.15))
+right <- exp(log(0.006) + rnorm(n_athletes, sd = 0.15))
+residual_sd <- 0.06 * exp(rnorm(n_athletes, sd = 0.3))
+
+# Center and scale a two-piece Student-t draw to mean zero and variance one.
+shape <- 0.7
+nu <- 8
+left_mass <- plogis(-shape)
+half_t_mean <- sqrt(nu / pi) * exp(lgamma((nu - 1) / 2) - lgamma(nu / 2))
+raw_mean <- 2 * tanh(shape / 2) * half_t_mean
+raw_variance <- nu / (nu - 2) * (1 + 3 * tanh(shape / 2)^2) - raw_mean^2
+width <- ifelse(runif(nrow(sim)) < left_mass, -2 * left_mass, 2 * (1 - left_mass))
+error <- (width * abs(rt(nrow(sim), df = nu)) - raw_mean) / sqrt(raw_variance)
+distance <- sim$age - peak_age[row_id]
+curvature <- ifelse(distance <= 0, left[row_id], right[row_id])
+sim$y <- peak_level[row_id] - curvature * distance^2 +
+  0.04 * sim$indoor + residual_sd[row_id] * error
+
+fit_ext <- fit_peakage(
+  sim,
+  curve = "asymmetric",
+  model = "extended",
+  peak_formula = ~ event + cohort,
+  p_formula = ~ event,
+  left_formula = ~ event,
+  right_formula = ~ 1,
+  observation_formula = ~ 0 + indoor,
+  peak_sd_group = "event",
+  prior = list(
+    beta_mean = list(alpha = c(0.8, 0), L = c(log(0.01), 0), R = log(0.01)),
+    beta_sd = list(alpha = 0.2, L = 0.5, R = 0.5, tau = 0.1),
+    delta_sd = 0.1,
+    scale_sd = c(alpha = 0.15, L = 0.5, R = 0.5, tau = 0.1),
+    residual_scale_sd = 0.15
+  ),
+  chains = 2,
+  iter_warmup = 300,
+  iter_sampling = 300,
+  seed = 24
+)
+
+summarise_peakage(fit_ext)
+plot_athlete_curve(fit_ext, sim, athlete_id = "S01", band_type = "pred")
+```
+
+The formulas for athlete-level parameters include an intercept. Athlete-level
+covariates and peak-level SD groups are constant within athlete. Competition
+covariates may vary between records. The plot shows the fitted trajectory and
+predictive band at zero competition adjustment. The observed scores are adjusted
+to that same reference using the fitted competition effects.
+
+The extended model uses fixed priors. Set `prior` for the scale of your scores
+and covariates. The default peak-level and residual-scale priors are intended
+for scores roughly on a zero-to-one scale. `beta_mean` and `beta_sd` are lists
+with entries named `alpha`, `L`, `R`, and `tau`. Each supplied entry can be a
+scalar or a vector aligned with that component's design matrix. Named vectors
+must match the design column names. See `?fit_peakage` for the full list of
+prior arguments.
+
+To reproduce the World Athletics analysis, use its exact design matrices,
+contrast coding, birth-year scaling, peak-level SD groups, and two fixed
+prior specifications. The synthetic example above illustrates the same model
+components with its own design and priors.
+
+The installed example `aoas_v8.R` prepares the full-cohort inputs from
+your copy of the original v8 workflow. It supports both fixed prior profiles.
+
+```r
+source(system.file("examples", "aoas_v8.R", package = "peakAge"))
+inputs <- prepare_aoas_v8("path/to/v8", profile = "primary")
+# fit <- fit_aoas_v8("path/to/v8", profile = "primary")
 ```

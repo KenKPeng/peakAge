@@ -1,7 +1,7 @@
 Package: peakAge
 Type: Package
 Title: Bayesian Latent Peak-Age Models for Athlete Performance
-Version: 0.1.0
+Version: 0.2.0
 Authors@R:
     person("K.Ken", "Peng",
            email = "kangyi_peng@sfu.ca",
@@ -10,7 +10,10 @@ Description: Bayesian hierarchical models for estimating athletes' peak age
     and performance trajectories using symmetric and asymmetric latent
     peak-performance curves. The package supports athlete-level covariates,
     population-level effects, and Bayesian uncertainty quantification via
-    posterior summaries and visualizations.
+    posterior summaries and visualizations. An extended asymmetric model
+    supports correlated athlete effects, competition-level covariates,
+    grouped peak-height scales, and athlete-specific residual scales with
+    standardized two-piece Student-t errors.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true

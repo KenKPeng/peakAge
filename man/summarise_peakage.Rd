@@ -21,7 +21,9 @@ Default c(0.05, 0.5, 0.95).}
 
 \item{include_diagnostics}{Logical; include rhat/ess columns if available.}
 
-\item{include_population}{Logical; include population/baseline parameters.}
+\item{include_population}{Logical; include population/baseline parameters.
+For extended fits, this includes the intercepts, random-effect scales and
+correlations, and residual distribution parameters.}
 
 \item{rename_coefs}{Logical; if TRUE, rename beta rows using design matrix column names.}
 
@@ -34,6 +36,8 @@ An object of class \code{peakage_summary}.
 This summary uses cmdstanr's built-in summary table, which is stable and fast.
 It groups parameters by submodel blocks and optionally renames regression
 coefficients using the design-matrix column names.
+Extended fits also summarize the random-effect scales and correlations,
+the residual distribution, and any competition-level coefficients.
 }
 \details{
 Note: prior settings (if stored in the fit object) are kept in the returned object

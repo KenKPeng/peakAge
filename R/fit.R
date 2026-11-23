@@ -2,10 +2,8 @@
 #'
 #' Main entry point: prepares Stan data, compiles the Stan model, and runs MCMC.
 #'
-#' Prior design (v1):
-#' - We encourage users to standardize y to roughly 0-1. If not, adjust p prior accordingly.
-#' - Users typically only need to set p prior (and optionally k prior).
-#' - Other priors default to weak / conservative values and are not the primary user surface.
+#' The default priors assume scores on roughly a zero-to-one scale. Set the
+#' peak-height and observation-scale priors to suit the data if using other units.
 #'
 #' @param df Long-format data frame. Must include athlete id, age, and y columns.
 #' @param curve Curve family: "symmetric" or "asymmetric".
@@ -27,16 +25,36 @@
 #'     # or asymmetric:
 #'     # k = list(pop = list(L = c(meanL, sdL), R = c(meanR, sdR)))
 #'   )
-#' All other priors have weak defaults (see code).
+#'   For the extended model, \code{beta_mean} and \code{beta_sd} are lists
+#'   indexed by \code{alpha}, \code{L}, \code{R}, and \code{tau}. Each entry
+#'   is a scalar or a vector for that formula's model matrix, with names
+#'   matching the design columns when supplied. Other fields are
+#'   \code{delta_sd} for competition coefficients,
+#'   \code{scale_sd} for the four athlete-effect half-normal prior scales
+#'   in the same order, \code{residual_scale_sd} and
+#'   \code{residual_heterogeneity_sd} for residual half-normal prior scales,
+#'   \code{lkj_eta}, \code{error_shape_sd}, and \code{error_nu_shape} and
+#'   \code{error_nu_rate} for the Gamma prior restricted to degrees of freedom
+#'   greater than two. Omitted fields use the default prior values.
 #' @param formula Deprecated/compatibility alias for `peak_formula`.
 #' @param id,age,y Column names in df.
 #' @param grainsize grainsize for Stan reduce_sum.
+#' @param model Fit \code{"baseline"} (default) or the opt-in \code{"extended"}
+#'   asymmetric model. The extended model jointly estimates correlated athlete
+#'   effects, athlete-specific residual SDs, and two-piece Student-t errors.
+#' @param left_formula,right_formula Optional athlete-level formulas for the two
+#'   log curvatures in the extended model. Each defaults to \code{k_formula}.
+#' @param observation_formula One-sided competition-level formula for the
+#'   extended model. Its intercept is omitted because peak height supplies it.
+#' @param peak_sd_group Optional name of an athlete-level column identifying
+#'   groups that share a peak-height SD in the extended model.
 #' @param iter_warmup,iter_sampling MCMC iterations.
 #' @param chains,parallel_chains,threads_per_chain Sampling parallelism.
 #' @param adapt_delta,max_treedepth Stan NUTS controls.
 #' @param seed Random seed passed to Stan.
 #' @param refresh Stan sampling refresh.
-#' @param stan_file Optional path to Stan file. If NULL, uses inst/stan based on `curve`.
+#' @param stan_file Optional path to a compatible Stan file. If NULL, uses
+#'   the bundled file for the selected model and curve.
 #' @param ... Passed to cmdstanr::CmdStanModel$sample().
 #'
 #' @return An object of class `peakage_fit`.
@@ -62,15 +80,39 @@ fit_peakage <- function(df,
                         seed = NULL,
                         refresh = 0,
                         stan_file = NULL,
-                        ...) {
+                        ...,
+                        model = c("baseline", "extended"),
+                        left_formula = NULL,
+                        right_formula = NULL,
+                        observation_formula = ~ 0,
+                        peak_sd_group = NULL) {
   if (!requireNamespace("cmdstanr", quietly = TRUE)) {
     stop("Package `cmdstanr` is required. Please install it first.")
   }
 
   curve <- match.arg(curve)
+  model <- match.arg(model)
 
   # ---- backward compatibility: formula -> peak_formula ----
   if (!is.null(formula)) peak_formula <- formula
+
+  if (model == "extended") {
+    if (curve != "asymmetric") stop("The extended model requires curve = 'asymmetric'.")
+    return(.fit_peakage_extended(
+      df, peak_formula, p_formula,
+      if (is.null(left_formula)) k_formula else left_formula,
+      if (is.null(right_formula)) k_formula else right_formula,
+      observation_formula, peak_sd_group, prior, id, age, y, grainsize, stan_file,
+      chains = chains, parallel_chains = parallel_chains,
+      threads_per_chain = threads_per_chain, iter_warmup = iter_warmup,
+      iter_sampling = iter_sampling, adapt_delta = adapt_delta,
+      max_treedepth = max_treedepth, seed = seed, refresh = refresh, ...
+    ))
+  }
+  if (!is.null(left_formula) || !is.null(right_formula) ||
+      !missing(observation_formula) || !is.null(peak_sd_group)) {
+    stop("Extended model options require model = 'extended'.")
+  }
 
   # --- locate Stan file inside installed package (preferred) ---
   if (is.null(stan_file)) {

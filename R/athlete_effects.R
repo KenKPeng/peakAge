@@ -10,6 +10,10 @@
 #' @param include_ci Logical; include 95% CI if TRUE.
 #' @param include_p Logical; include p if TRUE.
 #' @param include_k Logical; include k (or kL/kR) if TRUE.
+#'   Extended fits summarize curvature on its natural scale after exponentiating
+#'   each posterior draw.
+#' @param include_sigma_y Logical; include the athlete-specific residual SD for
+#'   an extended fit. Defaults to FALSE.
 #'
 #' @return A data.frame with one row per athlete.
 #' @export
@@ -18,7 +22,8 @@ athlete_estimates <- function(fit,
                               point = c("mean", "median"),
                               include_ci = TRUE,
                               include_p = TRUE,
-                              include_k = TRUE) {
+                              include_k = TRUE,
+                              include_sigma_y = FALSE) {
   point <- match.arg(point)
 
   if (!is.list(fit) || is.null(fit$fit) || !inherits(fit$fit, "CmdStanMCMC")) {
@@ -29,6 +34,7 @@ athlete_estimates <- function(fit,
   }
 
   curve <- fit$curve %||% "symmetric"
+  extended <- identical(fit$model, "extended")
   athlete_ids_all <- fit$athlete_ids
   I <- length(athlete_ids_all)
 
@@ -46,9 +52,20 @@ athlete_estimates <- function(fit,
   } else {
     c("T_hat", "p_hat", "logkL_hat", "logkR_hat")
   }
+  if (isTRUE(include_sigma_y)) {
+    if (!extended) {
+      stop("`include_sigma_y` requires an extended fit with athlete-specific residual SDs.")
+    }
+    vars <- c(vars, "sigma_y_i")
+  }
 
   # ---- pull draws and compute summaries (robust 95% CI) ----
-  dr <- fit$fit$draws(variables = vars, format = "draws_matrix")
+  selected <- if (extended) {
+    as.vector(outer(vars, unique(keep_i), function(var, i) sprintf("%s[%d]", var, i)))
+  } else {
+    vars
+  }
+  dr <- fit$fit$draws(variables = selected, format = "draws_matrix")
   cn <- colnames(dr)
 
   idx <- .parse_indexed_param(cn)
@@ -57,6 +74,10 @@ athlete_estimates <- function(fit,
   dr <- dr[, ok, drop = FALSE]
   base <- idx$base[ok]
   ii   <- idx$i[ok]
+  if (extended && include_k) {
+    curvature <- base %in% c("logkL_hat", "logkR_hat")
+    dr[, curvature] <- exp(dr[, curvature, drop = FALSE])
+  }
 
   pt <- if (point == "mean") colMeans(dr) else apply(dr, 2, stats::median)
   if (include_ci) {
@@ -95,9 +116,13 @@ athlete_estimates <- function(fit,
 
   add_family("T_hat", "T")
   if (include_p) add_family("p_hat", "p")
+  if (isTRUE(include_sigma_y)) add_family("sigma_y_i", "sigma_y")
 
   if (include_k) {
-    if (curve == "symmetric") {
+    if (extended) {
+      add_family("logkL_hat", "kL")
+      add_family("logkR_hat", "kR")
+    } else if (curve == "symmetric") {
       add_family("logk_hat", "logk_tmp")
       out[[paste0("k_", point)]] <- exp(out[[paste0("logk_tmp_", point)]])
       if (include_ci) {
